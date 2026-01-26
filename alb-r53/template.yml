@@ -1,0 +1,283 @@
+Description: New VPC and EC2 instance
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.micro
+
+  LatestAmiId:
+    Description: The latest Amazon Linux 2023 AMI from the Parameter Store
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+  PreferredSubnet:
+    Type: String
+    Default: A
+    AllowedValues: [A, B]
+
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+
+  DomainName:
+    Type: String
+
+Conditions:
+  UseSubnetA: !Equals [!Ref PreferredSubnet, A]
+
+Resources:
+# Network resources
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.102.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+
+  # Must ensure both subnets are in seperate AZs, as this is not guaranteed by the AWS API  
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.102.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.102.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  Route:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+      
+# DNS
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt ElasticLoadBalancer.CanonicalHostedZoneID
+        DNSName: !GetAtt ElasticLoadBalancer.DNSName
+  
+  SSLCert:
+    Type: "AWS::CertificateManager::Certificate"
+    Properties: 
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+# Web and ALB resources
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-alb-secg
+      GroupDescription: Allow HTTP access via my IP address
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-ec2-secg
+      GroupDescription: Allow HTTP access via my IP address
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  ElasticLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubnetA
+        - !Ref SubnetB
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Type: application
+
+  TargetGroup80:
+      Type: AWS::ElasticLoadBalancingV2::TargetGroup
+      Properties:
+        Name: !Sub ${AWS::StackName}-tg80
+        Protocol: HTTP
+        Port: 80
+        TargetType: instance
+        VpcId: !Ref VPC
+
+  LoadBalancerListener80:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: redirect
+        RedirectConfig:
+          Protocol: "HTTPS"
+          Port: 443
+          Host: "#{host}"
+          Path: "/#{path}"
+          Query: "#{query}"
+          StatusCode: "HTTP_301"
+      LoadBalancerArn: !Ref ElasticLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  LoadBalancerListener443:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties: 
+      LoadBalancerArn: !Ref ElasticLoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: "ELBSecurityPolicy-TLS13-1-2-2021-06"
+      Certificates: 
+        - CertificateArn: !Ref SSLCert
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup80
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier: 
+        - !Ref SubnetA
+        - !Ref SubnetB
+      TargetGroupARNs:
+        - !GetAtt TargetGroup80.TargetGroupArn
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 2
+    CreationPolicy:
+      ResourceSignal:
+        Count: 2  
+        Timeout: PT15M
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-LaunchTemplate
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf update -y
+            dnf install -y httpd
+            systemctl enable --now  httpd
+            echo "<html><body><h1>Hello from $(hostname)!</h1></body></html>" > /var/www/html/index.html
+            /opt/aws/bin/cfn-signal -e $? \
+              --stack ${AWS::StackName} \
+              --resource AutoScalingGroup \
+              --region ${AWS::Region}
+            
+# IAM resources
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref InstancePolicy
+
+  InstancePolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Path: /
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ssm:*'
+              - 'ssmmessages:*'
+              - 'ec2messages:*'
+            Resource: "*"
+Outputs:
+  WebsiteUrl:
+    Value: !Join
+      - ''
+      - - http://
+        - !Ref DomainName
+
+  WebsiteUrl443:
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref DomainName
+

@@ -1,4 +1,4 @@
-# Cludformation Templates
+# Cloudformation Templates
 
 Collection of cloudformation templates -- can be referenced when deploying basic resources.
 
