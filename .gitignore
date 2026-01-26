@@ -1,0 +1,157 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
+*~
+*.tmp
+*.swp
+*.swo
+*.bak
+*.ori
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+*.iml
+*.iws
+*.suo
+*.user
+*.userprefs
+
+# Vim / Emacs
+*~
+\#*\#
+.\#*
+auto-save-list/
+.tramp/
+
+# Node
+node_modules/
+.pnp/
+.pnp.js
+dist/
+build/
+coverage/
+.next/
+.nuxt/
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+env.bak/
+pip-log.txt
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Make / general build artifacts
+build/
+dist/
+out/
+bin/
+obj/
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+
+# Java / Gradle / Maven
+*.class
+*.jar
+*.war
+*.ear
+*.iml
+/.gradle/
+/target/
+
+# Ruby
+*.gem
+.bundle/
+vendor/bundle/
+log/
+tmp/
+coverage/
+
+# Go
+/bin/
+/pkg/
+*.exe
+
+# Docker
+docker-compose.override.yml
+docker-compose.*.yml
+docker-compose*.yaml
+**/docker-compose.override.yml
+
+# Terraform
+.terraform/
+tfstate
+terraform.tfstate.*
+crash.log
+override.tf
+override.tf.json
+.terraform.lock.hcl
+
+# AWS / CloudFormation / SAM / Serverless artifacts
+.aws-sam/
+.serverless/
+packaged-template*.yaml
+packaged-template*.yml
+samconfig.toml
+.aws-sam/build/
+.aws-sam/deploy/
+.aws-sam/cache/
+*.sam-build/
+.template.yaml.packaged
+.template.yml.packaged
+
+# AWS CLI / packaging artifacts
+*.packaged.yaml
+*.packaged.yml
+
+# Chalice / other frameworks
+.chalice/
+.chalice/config.json
+
+# Secrets / keys (do not track private keys or secrets)
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.p8
+*.pfx
+*.env
+.env.*
+credentials
+aws_credentials
+*.secret
+secrets.yml
+
+# OS generated files
+npm-debug.log*
+yarn-error.log*
