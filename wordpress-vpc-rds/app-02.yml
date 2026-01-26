@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Template for WebServer with Security Group and EC2 Instance
+
+Parameters:
+
+  FileSystemResource: 
+    Type: String
+
+  DatabaseHostname:
+    Type: String
+
+  DatabaseRootUser:
+    Type: String
+    Default: 'root'
+
+  DatabaseRootPassword:
+    Type: String
+    Default: Password0
+
+  WordpressDatabase:
+    Type: String
+    Default: wordpress
+
+  WordpressDatabaseUser:
+    Type: String
+    Default: wordpress
+
+  WordpressDatabasePassword:
+    Type: String
+    Default: Password0
+
+  WordpressHostname:
+    Type: String
+    Default: ""
+
+  AppSecurityGroup:
+    Type: String
+
+  LoadBalancerSecurityGroup:
+    Type: String
+
+  VpcId:
+    Type: String
+
+  LatestAmiId:
+    Description: The latest Amazon Linux 2023 AMI from the Parameter Store
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.medium
+    AllowedValues:
+      - t3.medium
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  SubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Description: First subnet for ALB
+  
+  SubnetB:
+    Type: AWS::EC2::Subnet::Id
+    Description: Second subnet for ALB (must be in different AZ)
+
+Resources:
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier: 
+        - !Ref SubnetA
+        - !Ref SubnetB
+      TargetGroupARNs:
+        - !GetAtt TargetGroup80.TargetGroupArn
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 2
+    CreationPolicy:
+      ResourceSignal:
+        Count: 2  
+        Timeout: PT15M
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-LaunchTemplate
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        SecurityGroupIds:
+          - !Ref AppSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf update -y
+            dnf install -y amazon-efs-utils docker mariadb1011-client-utils
+
+            mysql -h${DatabaseHostname} -u${DatabaseRootUser} -p${DatabaseRootPassword} <<EOF
+            CREATE DATABASE IF NOT EXISTS ${WordpressDatabase};
+            CREATE USER IF NOT EXISTS '${WordpressDatabaseUser}'@'%' IDENTIFIED BY '${WordpressDatabasePassword}';
+            GRANT ALL PRIVILEGES ON ${WordpressDatabase}.* TO '${WordpressDatabaseUser}'@'%';
+            FLUSH PRIVILEGES;
+            EOF
+
+            useradd -m -u 1100 wordpress
+            usermod -aG docker wordpress
+            su wordpress -c 'mkdir -p /home/wordpress/{wp-data,data_backups}'
+            echo "${FileSystemResource}:/ /home/wordpress/wp-data efs _netdev,tls,iam 0 0" >> /etc/fstab
+            mount -a
+            systemctl enable --now docker
+            su wordpress -c bash <<'EOF'
+            docker run -d \
+              --name wordpress \
+              --restart always \
+              -v "/home/wordpress/wp-data:/var/www/html" \
+              -v "/home/wordpress/data_backups:/var/tmp/backups" \
+              -p 80:80 \
+              -e WORDPRESS_CONFIG_EXTRA="define( 'WP_HOME', \"http://${WordpressHostname}\" ); define( 'WP_SITEURL', \"http://${WordpressHostname}\");" \
+              -e WORDPRESS_DB_HOST=${DatabaseHostname} \
+              -e WORDPRESS_DB_USER=${WordpressDatabaseUser} \
+              -e WORDPRESS_DB_PASSWORD=${WordpressDatabasePassword} \
+              -e WORDPRESS_DB_NAME=${WordpressDatabase} \
+              wordpress:6.9.0-apache
+            EOF
+            # Signal success or failure
+            /opt/aws/bin/cfn-signal -e $? \
+              --stack ${AWS::StackName} \
+              --resource AutoScalingGroup \
+              --region ${AWS::Region}
+
+  ElasticLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubnetA
+        - !Ref SubnetB
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Type: application
+
+  TargetGroup80:
+      Type: AWS::ElasticLoadBalancingV2::TargetGroup
+      Properties:
+        Name: !Sub ${AWS::StackName}-tg80
+        Protocol: HTTP
+        Port: 80
+        TargetType: instance
+        VpcId: !Ref VpcId
+
+  LoadBalancerListener80:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref TargetGroup80
+      LoadBalancerArn: !Ref ElasticLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+# Roles for EC2
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref InstancePolicy
+
+  InstancePolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Path: /
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ssm:*'
+              - 'ssmmessages:*'
+              - 'ec2messages:*'
+            Resource: "*"
+
+Outputs:
+  WordpressUrl:
+    Value: !Join
+      - ''
+      - - http://
+        - !GetAtt ElasticLoadBalancer.DNSName
+  StackName:
+    Value: !Ref AWS::StackName

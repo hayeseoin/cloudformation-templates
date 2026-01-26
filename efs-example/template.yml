@@ -1,0 +1,152 @@
+Parameters:
+  LatestAmiId:
+    Description: The latest Amazon Linux 2023 AMI from the Parameter Store
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.small
+    AllowedValues:
+      - t2.small
+      - t3.medium
+    ConstraintDescription: must be a valid EC2 instance type.
+
+  VpcId:
+    Description: ID of the default VPC
+    Type: String
+    Default: vpc-08a65ff2628cc543c
+
+  SubnetId1:
+    Type: AWS::EC2::Subnet::Id
+    Description: First subnet for ALB
+    Default: subnet-03f7ec0eb60bdb648
+    
+  SubnetId2:
+    Type: AWS::EC2::Subnet::Id
+    Description: First subnet for ALB
+    Default: subnet-0df66fc9cd7048e1b
+    
+  SubnetId3:
+    Type: AWS::EC2::Subnet::Id
+    Description: First subnet for ALB
+    Default: subnet-0895c79c06a1dca2a
+    
+Resources:
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Allow HTTP access via my IP address
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Allow HTTP access via my IP address
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref InstanceSecurityGroup
+          
+  FileSystemResource:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-FileSystem
+
+  MountTargetResource1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: !Ref SubnetId1
+      SecurityGroups:
+      - !Ref EFSSecurityGroup
+
+  MountTargetResource2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: !Ref SubnetId2
+      SecurityGroups:
+      - !Ref EFSSecurityGroup
+
+  MountTargetResource3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: !Ref SubnetId3
+      SecurityGroups:
+      - !Ref EFSSecurityGroup
+
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Server
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref InstanceProfile
+      InstanceType: !Ref InstanceType
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y httpd amazon-efs-utils
+          mkdir -p /mnt/efs
+          echo "${FileSystemResource}:/ /mnt/efs efs _netdev,tls,iam 0 0" >> /etc/fstab
+          mount -a
+          systemctl enable --now  httpd
+          echo "<html><body><h1>Hello from $(hostname)!</h1></body></html>" > /var/www/html/index.html
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref InstanceRole
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: 'Allow'
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - !Ref InstancePolicy
+
+  InstancePolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Path: /
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ssm:*'
+              - 'ssmmessages:*'
+              - 'ec2messages:*'
+              - 'elasticfilesystem:*'
+            Resource: "*"
+

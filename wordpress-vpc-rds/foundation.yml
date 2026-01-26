@@ -1,0 +1,185 @@
+Description: New VPC and EC2 instance
+
+Resources:
+# Network resources
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.102.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-vpc
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.102.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.102.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  Route:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+      
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-alb-secg
+      GroupDescription: Allow HTTP access from the internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-ec2-secg
+      GroupDescription: Allow ingress from Load Balancer
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow web server access to RDS instance
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+          FromPort: 3306
+          ToPort: 3306
+
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: Allow HTTP access via my IP address
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+# IAM resources
+#  InstanceProfile:
+#    Type: AWS::IAM::InstanceProfile
+#    Properties:
+#      Path: "/"
+#      Roles:
+#        - !Ref InstanceRole
+
+#  InstanceRole:
+#    Type: AWS::IAM::Role
+#    Properties:
+#      RoleName: !Sub ${AWS::StackName}-Role
+#      AssumeRolePolicyDocument:
+#        Version: '2012-10-17'
+#        Statement:
+#        - Effect: 'Allow'
+#          Principal:
+#            Service:
+#            - 'ec2.amazonaws.com'
+#          Action:
+#          - 'sts:AssumeRole'
+#      ManagedPolicyArns:
+#        - !Ref InstancePolicy
+
+#  InstancePolicy:
+#    Type: 'AWS::IAM::ManagedPolicy'
+#    Properties:
+#      Path: /
+#      PolicyDocument:
+#        Version: "2012-10-17"
+#        Statement:
+#          - Effect: Allow
+#            Action:
+#              - 'ssm:*'
+#              - 'ssmmessages:*'
+#              - 'ec2messages:*'
+#            Resource: "*"
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export: 
+      Name: !Sub ${AWS::StackName}-VpcId
+  SubnetA:
+    Value: !Ref SubnetA
+    Export:
+      Name: !Sub ${AWS::StackName}-SubnetA
+  SubnetB:
+    Value: !Ref SubnetB
+    Export:
+      Name: !Sub ${AWS::StackName}-SubnetB
+  AppSecurityGroupId:
+    Value: !Ref EC2SecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-AppSecurityGroup
+  DatabaseSecurityGroupId:
+    Value: !Ref RDSSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-DatabaseSecurityGroup
+  FilestoreSecurityGroupId:
+    Value: !Ref EFSSecurityGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-FilestoreSecurityGroup
+  LoadBalancerSecurityGroupId:
+    Value: !Ref ALBSecurityGroup
+    Export: 
+      Name: !Sub ${AWS::StackName}-LoadBalancerSecurityGroup

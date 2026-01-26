@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Top-level stack template that deploys a nested stack
+
+Parameters:
+  DBUsername: 
+    Type: String
+    Default: root
+  DBPassword:
+    Type: String
+    Default: Password0
+  WordpressDatabase: 
+    Type: String
+    Default: wordpress
+  WordpressDatabaseUser:
+    Type: String
+    Default: wordpress
+  WordpressDatabasePassword:
+    Type: String
+    Default: Password0
+  WordpressHostname:
+    Type: String
+
+Resources:
+  Foundation:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./foundation.yml
+
+  State:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./state.yml
+      Parameters:
+        DBUsername: !Ref DBUsername
+        DBPassword: !Ref DBPassword
+        FilestoreSecurityGroup: !GetAtt Foundation.Outputs.FilestoreSecurityGroupId
+        DatabaseSecurityGroup: !GetAtt Foundation.Outputs.DatabaseSecurityGroupId
+        SubnetA: !GetAtt Foundation.Outputs.SubnetA
+        SubnetB: !GetAtt Foundation.Outputs.SubnetB
+  App:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./app-02.yml
+      Parameters:
+        FileSystemResource: !GetAtt State.Outputs.FileSystemResource
+        DatabaseHostname: !GetAtt State.Outputs.DatabaseHostname
+        DatabaseRootUser: !Ref DBUsername
+        DatabaseRootPassword: !Ref DBPassword
+        WordpressDatabase: !Ref WordpressDatabase
+        WordpressDatabaseUser: !Ref WordpressDatabaseUser
+        WordpressDatabasePassword: !Ref WordpressDatabasePassword
+        WordpressHostname: !Ref WordpressHostname
+        AppSecurityGroup: !GetAtt Foundation.Outputs.AppSecurityGroupId
+        LoadBalancerSecurityGroup: !GetAtt Foundation.Outputs.LoadBalancerSecurityGroupId
+        VpcId: !GetAtt Foundation.Outputs.VpcId
+        SubnetA: !GetAtt Foundation.Outputs.SubnetA
+        SubnetB: !GetAtt Foundation.Outputs.SubnetB
+
+Outputs:
+  WordpressUrl:
+    Value: !GetAtt App.Outputs.WordpressUrl
+  ApplicationStackName:
+    Value: !GetAtt App.Outputs.StackName
+  StateStackName:
+    Value: !GetAtt State.Outputs.StackName
+  AppSecurityGroup:
+    Value: !GetAtt Foundation.Outputs.AppSecurityGroupId
+

@@ -1,0 +1,78 @@
+Description: Database and Filestore
+
+Parameters:
+  DBUsername:
+    Type: String
+    Default: root
+  DBPassword:
+    Type: String
+    Default: Password0
+  FilestoreSecurityGroup:
+    Type: String
+  DatabaseSecurityGroup:
+    Type: String
+  SubnetA:
+    Type: String
+  SubnetB:
+    Type: String
+
+Resources:
+  FileSystemResource:
+    Type: 'AWS::EFS::FileSystem'
+    Properties:
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-FileSystem
+
+  MountTargetResourceA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: !Ref SubnetA
+      SecurityGroups:
+        - !Ref FilestoreSecurityGroup 
+
+  MountTargetResourceB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystemResource
+      SubnetId: !Ref SubnetB
+      SecurityGroups:
+        - !Ref FilestoreSecurityGroup 
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "${AWS::StackName}-db"
+      AllocatedStorage: "5"
+      DBInstanceClass: db.t3.micro
+      VPCSecurityGroups: 
+        - !Ref DatabaseSecurityGroup 
+      Engine: mysql
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Description of subnet group
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+
+Outputs:
+  FileSystemResource:
+    Value: !Ref FileSystemResource
+    Export: 
+      Name: !Sub ${AWS::StackName}-Filestore
+
+  DatabaseHostname:
+    Value: !GetAtt Database.Endpoint.Address
+    Export: 
+      Name: !Sub ${AWS::StackName}-DatabaseHostname
+
+  StackName:
+    Value: !Ref AWS::StackName
