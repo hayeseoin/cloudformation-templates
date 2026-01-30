@@ -6,6 +6,7 @@ Parameters:
     Default: root
   DBPassword:
     Type: String
+    NoEcho: True
     Default: Password0
   FilestoreSecurityGroup:
     Type: String
